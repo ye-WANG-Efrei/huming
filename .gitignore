@@ -1,0 +1,24 @@
+# 私钥 / 敏感文件
+keys/
+*.pem
+*.key
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyc
+
+# 虚拟环境
+huming-venv/
+venv/
+.venv/
+env/
+
+# 音乐缓存（可选，如需保留请删除此行）
+music_cache.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
