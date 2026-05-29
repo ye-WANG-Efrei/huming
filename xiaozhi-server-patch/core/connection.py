@@ -241,6 +241,9 @@ class ConnectionHandler:
             self.conn_from_mqtt_gateway = request_path.endswith("?from=mqtt_gateway")
             if self.conn_from_mqtt_gateway:
                 self.logger.bind(tag=TAG).info("连接来自:MQTT网关")
+            if "bridge=true" in request_path:
+                self.is_bridge = True
+                self.logger.bind(tag=TAG).info("连接来自:Bridge客户端")
 
             # 初始化活动时间戳
             self.first_activity_time = time.time() * 1000
@@ -623,6 +626,10 @@ class ConnectionHandler:
 
     async def _initialize_private_config_async(self):
         """从接口异步获取差异化配置（异步版本，不阻塞主循环）"""
+        if self.is_bridge:
+            self.need_bind = False
+            self.bind_completed_event.set()
+            return
         if not self.read_config_from_api:
             self.need_bind = False
             self.bind_completed_event.set()
