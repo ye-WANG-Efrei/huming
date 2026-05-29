@@ -55,8 +55,9 @@ async def connect():
     print("握手OK, session_id =", data["session_id"])
     return ws
 
-async def stream_music(ws, song_keyword, start_seconds, end_seconds):
-    cache_file = os.path.join(CACHE_DIR, f"{song_keyword}_{int(start_seconds)}.opus")
+async def stream_music(ws, song_keyword, start_seconds, end_seconds, artist=None, original_id=None):
+    cache_name = f"{original_id}_{int(start_seconds)}" if original_id else f"{song_keyword}_{int(start_seconds)}"
+    cache_file = os.path.join(CACHE_DIR, f"{cache_name}.opus")
 
     if os.path.exists(cache_file):
         print(f"命中缓存: {cache_file}")
@@ -74,8 +75,9 @@ async def stream_music(ws, song_keyword, start_seconds, end_seconds):
     print("无缓存，开始下载...")
     duration = end_seconds - start_seconds
 
+    ncm_url = f'https://music.163.com/song?id={original_id}' if original_id else f'scsearch1:{song_keyword} {artist}'
     proc = subprocess.Popen(
-        ['yt-dlp', '-o', '-', '--quiet', '-f', 'bestaudio', f'scsearch1:{song_keyword}'],
+        ['yt-dlp', '-o', '-', '--quiet', '-f', 'bestaudio', ncm_url],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
@@ -108,13 +110,13 @@ async def stream_music(ws, song_keyword, start_seconds, end_seconds):
 
 async def main():
     print("开始查歌...")
-    result = await lookup("七溜八溜", "waiya")
+    result = await lookup("WAIYA")
     print(f"找到: {result['song_name']} @ {result['seconds']}s ~ {result['end_seconds']}s")
 
     print("连接WebSocket...")
     ws = await connect()
     print("开始推流...")
-    await stream_music(ws, "waiya", result["seconds"], result["end_seconds"])
+    await stream_music(ws, result["song_name"], result["seconds"], result["end_seconds"], artist=result.get("artist"), original_id=result.get("original_id"))
     await ws.close()
     print("推流完成")
 
