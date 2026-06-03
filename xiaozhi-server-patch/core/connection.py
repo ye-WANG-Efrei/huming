@@ -366,7 +366,11 @@ class ConnectionHandler:
             if self.is_bridge:
                 try:
                     msg = json.loads(message)
-                    if msg.get("type") == "tts_bridge":
+                    if msg.get("type") == "hello":
+                        # 从 bridge hello 提取目标设备，发回 hello 应答
+                        self.target_device = msg.get("target_device")
+                        await self.websocket.send(json.dumps(self.welcome_msg))
+                    elif msg.get("type") == "tts_bridge":
                         target = self.server.connections.get(self.target_device) if self.target_device else None
                         if target:
                             state = msg.get("state")
