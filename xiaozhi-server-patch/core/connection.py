@@ -992,6 +992,28 @@ class ConnectionHandler:
 
         response_message = []
 
+        # ASR 后先查 bridge 缓存，命中则直接播，跳过 LLM
+        if query:
+            bridge_url = os.environ.get("BRIDGE_URL", "")
+            if bridge_url:
+                try:
+                    import httpx as _httpx
+                    _r = _httpx.post(f"{bridge_url}/check_play",
+                                     json={"lyric": query, "device_id": self.device_id},
+                                     timeout=2)
+                    if _r.json().get("status") == "playing":
+                        self.logger.bind(tag=TAG).info(f"缓存命中，跳过LLM直接播放: {query}")
+                        self.tts.tts_text_queue.put(
+                            TTSMessageDTO(
+                                sentence_id=current_sentence_id,
+                                sentence_type=SentenceType.LAST,
+                                content_type=ContentType.ACTION,
+                            )
+                        )
+                        return
+                except Exception:
+                    pass  # 查缓存失败则继续走 LLM
+
         # 如果有工具调用提醒，临时添加到对话中（标记为临时消息）
         if tool_call_reminder:
             self.dialogue.put(Message(role="user", content=tool_call_reminder, is_temporary=True))

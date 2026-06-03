@@ -8,7 +8,7 @@ import time
 import opuslib
 import websockets
 from aiohttp import web
-from music import lookup
+from music import lookup, _load_cache, _embed_search
 import os
 
 DEVICE_ID = os.environ.get("DEVICE_ID", "DF:3F:F1:7A:6A:10")
@@ -169,11 +169,32 @@ async def handle_play(request):
     return web.json_response({"status": "ok"})
 
 
+async def handle_check_play(request):
+    """只查本地缓存（不走 ncm-cli），命中则触发播放。"""
+    data = await request.json()
+    lyric_text = data.get("lyric")
+    if not lyric_text:
+        return web.json_response({"status": "not_found"})
+    device_id = data.get("device_id", DEVICE_ID)
+
+    cache = _load_cache()
+    result = cache["lyric_index"].get(lyric_text)
+    if result is None:
+        result = _embed_search(lyric_text, cache["lyric_index"])
+    if result is None:
+        return web.json_response({"status": "not_found"})
+
+    print(f"缓存命中: {lyric_text} → {result['song_name']} @ {result['seconds']}s")
+    asyncio.create_task(play(lyric_text, device_id))
+    return web.json_response({"status": "playing"})
+
+
 HOST = "0.0.0.0"
 PORT = 8888
 
 if __name__ == "__main__":
     app = web.Application()
     app.router.add_post("/play", handle_play)
+    app.router.add_post("/check_play", handle_check_play)
     print(f"Bridge server 启动，监听 http://{HOST}:{PORT}")
     web.run_app(app, host=HOST, port=PORT)
