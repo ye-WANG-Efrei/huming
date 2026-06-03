@@ -517,6 +517,8 @@ class ConnectionHandler:
             )
 
     def _initialize_components(self):
+        if self.is_bridge:
+            return  # bridge connections don't need TTS/ASR/LLM components
         try:
             if self.tts is None:
                 self.tts = self._initialize_tts()
