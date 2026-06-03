@@ -1196,26 +1196,33 @@ class ConnectionHandler:
         if len(response_message) > 0:
             text_buff = "".join(response_message)
 
-            # 拦截播放指令
+            # 拦截播放指令（支持 LLM 在 JSON 前后夹杂文字的情况）
+            play_cmd = None
             try:
-                cmd = json.loads(text_buff.strip())
-                if isinstance(cmd, dict) and cmd.get("action") == "play" and cmd.get("lyric"):
-                    import httpx
-                    self.logger.bind(tag=TAG).info(f"拦截到播放指令: {cmd['lyric']}")
-                    bridge_url = os.environ.get("BRIDGE_URL", "http://localhost:8888")
-                    httpx.post(f"{bridge_url}/play",
-                                json={"lyric": cmd["lyric"], "device_id": self.device_id}, timeout=5)
-                    if depth == 0:
-                        self.tts.tts_text_queue.put(
-                            TTSMessageDTO(
-                                sentence_id=current_sentence_id,
-                                sentence_type=SentenceType.LAST,
-                                content_type=ContentType.ACTION,
-                            )
-                        )
-                    return
+                play_cmd = json.loads(text_buff.strip())
             except Exception:
-                pass  # 不是 JSON 或解析失败，正常继续
+                # 尝试从文本中提取嵌入的 JSON
+                import re
+                m = re.search(r'\{"action"\s*:\s*"play"[^}]*"lyric"\s*:\s*"([^"]+)"[^}]*\}', text_buff)
+                if m is None:
+                    m = re.search(r'\{"lyric"\s*:\s*"([^"]+)"[^}]*"action"\s*:\s*"play"[^}]*\}', text_buff)
+                if m:
+                    play_cmd = {"action": "play", "lyric": m.group(1)}
+            if isinstance(play_cmd, dict) and play_cmd.get("action") == "play" and play_cmd.get("lyric"):
+                import httpx
+                self.logger.bind(tag=TAG).info(f"拦截到播放指令: {play_cmd['lyric']}")
+                bridge_url = os.environ.get("BRIDGE_URL", "http://localhost:8888")
+                httpx.post(f"{bridge_url}/play",
+                            json={"lyric": play_cmd["lyric"], "device_id": self.device_id}, timeout=5)
+                if depth == 0:
+                    self.tts.tts_text_queue.put(
+                        TTSMessageDTO(
+                            sentence_id=current_sentence_id,
+                            sentence_type=SentenceType.LAST,
+                            content_type=ContentType.ACTION,
+                        )
+                    )
+                return
 
             self.tts.store_tts_text(current_sentence_id, text_buff)
             self.dialogue.put(Message(role="assistant", content=text_buff))
