@@ -992,8 +992,8 @@ class ConnectionHandler:
 
         response_message = []
 
-        # ASR 后先查 bridge 缓存，命中则直接播，跳过 LLM
-        if query:
+        # ASR 后先查 bridge 缓存，命中则直接播，跳过 LLM（只在顶层对话触发）
+        if depth == 0 and query:
             bridge_url = os.environ.get("BRIDGE_URL", "")
             if bridge_url:
                 try:
