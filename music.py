@@ -9,7 +9,7 @@ from sentence_transformers import SentenceTransformer
 CACHE_FILE = "music_cache.json"
 EMBED_CACHE_FILE = "lyric_embeddings.pkl"
 EMBED_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
-EMBED_THRESHOLD = 0.8
+EMBED_THRESHOLD = 0.9
 
 _model = None
 
