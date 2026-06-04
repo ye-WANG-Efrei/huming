@@ -165,8 +165,35 @@ async def handle_play(request):
     if not lyric_text:
         return web.json_response({"error": "missing lyric"}, status=400)
     device_id = data.get("device_id", DEVICE_ID)
-    asyncio.create_task(play(lyric_text, device_id))
+
+    # 时序关键：必须在返回 HTTP 200 之前完成 lookup + connect + sentence_start。
+    # 调用方（connection.py）用同步 httpx.post 等待这个响应，
+    # 响应返回后才会结束当前对话轮次（不再发 LAST）。
+    # 如果把 play() 整个扔到后台（create_task 后立刻返回），
+    # bridge 的 sentence_start 会在 connection.py 结束轮次之后才到达设备，
+    # 设备此时已自动进入聆听态，会忽略后续所有音频帧，导致无声。
+    try:
+        result = await lookup(lyric_text)
+        ws = await connect(target_device=device_id)
+        # 发送 sentence_start：设备收到后进入播放态，停止聆听
+        await ws.send(json.dumps({"type": "tts_bridge", "state": "start", "text": "♪"}))
+    except Exception as e:
+        print(f"播放前置失败: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+    # sentence_start 已发出，设备已在播放态，此时再返回 HTTP 200
+    # 后续音频推流放后台，不阻塞 HTTP 响应
+    asyncio.create_task(_do_stream(ws, result))
     return web.json_response({"status": "ok"})
+
+
+async def _do_stream(ws, result):
+    # stream_music 内部会再发一次 sentence_start（无害，设备会忽略重复信号）
+    # 然后推送音频帧，最后发 tts stop 结束播放态
+    await stream_music(ws, result["song_name"], result["seconds"], result["end_seconds"],
+                       artist=result.get("artist"), original_id=result.get("original_id"))
+    await ws.close()
+    print("推流完成")
 
 
 async def handle_check_play(request):

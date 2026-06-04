@@ -1233,17 +1233,23 @@ class ConnectionHandler:
             if isinstance(play_cmd, dict) and play_cmd.get("action") == "play" and play_cmd.get("lyric"):
                 import httpx
                 self.logger.bind(tag=TAG).info(f"拦截到播放指令: {play_cmd['lyric']}")
+                self.client_abort = True
+                self.reset_audio_states()
+                # 立即把设备锁在播放态，阻止它进入 listen 模式
+                asyncio.run_coroutine_threadsafe(
+                    self.websocket.send(json.dumps({
+                        "type": "tts",
+                        "state": "sentence_start",
+                        "session_id": self.session_id,
+                        "text": "♪"
+                    })),
+                    self.loop
+                ).result(timeout=2)
                 bridge_url = os.environ.get("BRIDGE_URL", "http://localhost:8888")
                 httpx.post(f"{bridge_url}/play",
                             json={"lyric": play_cmd["lyric"], "device_id": self.device_id}, timeout=5)
-                if depth == 0:
-                    self.tts.tts_text_queue.put(
-                        TTSMessageDTO(
-                            sentence_id=current_sentence_id,
-                            sentence_type=SentenceType.LAST,
-                            content_type=ContentType.ACTION,
-                        )
-                    )
+                self.client_abort = False
+                # 不发 LAST，由 bridge 的 tts stop 收尾
                 return
 
             self.tts.store_tts_text(current_sentence_id, text_buff)
