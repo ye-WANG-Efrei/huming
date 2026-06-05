@@ -71,6 +71,7 @@ async def stream_music(ws, song_keyword, start_seconds, end_seconds, artist=None
                 length = int.from_bytes(length_bytes, 'big')
                 opus_data = f.read(length)
                 await ws.send(opus_data)
+                await asyncio.sleep(0.06)  # 每帧 60ms，与设备 frame_duration 对齐
         await ws.send(json.dumps({"type": "tts_bridge", "state": "stop"}))
         print("推流完成（缓存）")
         return
@@ -135,6 +136,7 @@ async def stream_music(ws, song_keyword, start_seconds, end_seconds, artist=None
             opus_data = enc.encode(pcm, 960)
             cache.write(len(opus_data).to_bytes(2, 'big') + opus_data)
             await ws.send(opus_data)
+            await asyncio.sleep(0.06)  # 每帧 60ms，与设备 frame_duration 对齐
             frame_count += 1
             if frame_count % 50 == 0:
                 print(f"已推 {frame_count} 帧")
@@ -174,6 +176,9 @@ async def handle_play(request):
     # 设备此时已自动进入聆听态，会忽略后续所有音频帧，导致无声。
     try:
         result = await lookup(lyric_text)
+        if result is None:
+            print(f"未找到匹配歌曲: {lyric_text}")
+            return web.json_response({"error": "song not found"}, status=404)
         ws = await connect(target_device=device_id)
         # 发送 sentence_start：设备收到后进入播放态，停止聆听
         await ws.send(json.dumps({"type": "tts_bridge", "state": "start", "text": "♪"}))
@@ -181,8 +186,6 @@ async def handle_play(request):
         print(f"播放前置失败: {e}")
         return web.json_response({"error": str(e)}, status=500)
 
-    # sentence_start 已发出，设备已在播放态，此时再返回 HTTP 200
-    # 后续音频推流放后台，不阻塞 HTTP 响应
     asyncio.create_task(_do_stream(ws, result))
     return web.json_response({"status": "ok"})
 
@@ -197,12 +200,16 @@ async def _do_stream(ws, result):
 
 
 async def handle_check_play(request):
-    """只查本地缓存（不走 ncm-cli），命中则触发播放。"""
+    """只查本地缓存（不走 ncm-cli），命中则同步建连并发 sentence_start 后返回。"""
     data = await request.json()
     lyric_text = data.get("lyric")
     if not lyric_text:
         return web.json_response({"status": "not_found"})
     device_id = data.get("device_id", DEVICE_ID)
+
+    # 过滤太短的输入，避免日常用语误匹配歌词（embedding 相似度对短句不可靠）
+    if len(lyric_text.replace("。", "").replace("，", "").strip()) < 3:
+        return web.json_response({"status": "not_found"})
 
     cache = _load_cache()
     result = cache["lyric_index"].get(lyric_text)
@@ -212,7 +219,17 @@ async def handle_check_play(request):
         return web.json_response({"status": "not_found"})
 
     print(f"缓存命中: {lyric_text} → {result['song_name']} @ {result['seconds']}s")
-    asyncio.create_task(play(lyric_text, device_id))
+
+    # 同 handle_play：先同步 connect + sentence_start，设备进入播放态后再返回，
+    # 确保 connection.py 收到响应时设备已不在聆听态
+    try:
+        ws = await connect(target_device=device_id)
+        await ws.send(json.dumps({"type": "tts_bridge", "state": "start", "text": "♪"}))
+    except Exception as e:
+        print(f"check_play 前置失败: {e}")
+        return web.json_response({"status": "not_found"})
+
+    asyncio.create_task(_do_stream(ws, result))
     return web.json_response({"status": "playing"})
 
 

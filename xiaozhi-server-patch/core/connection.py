@@ -151,6 +151,7 @@ class ConnectionHandler:
         self.is_exiting = False  # 标记是否正在执行退出流程
         self.is_bridge = False  # 是否是 bridge 连接
         self.target_device = None  # bridge 的目标设备 ID
+        self._bridge_playing = False  # bridge 音乐播放中，屏蔽 ASR 输入
 
         # 为每个连接单独管理声纹识别
         self.voiceprint_provider = None
@@ -375,6 +376,7 @@ class ConnectionHandler:
                         if target:
                             state = msg.get("state")
                             if state == "start":
+                                target._bridge_playing = True  # 屏蔽 ASR，避免音乐被麦克风拾取
                                 await target.websocket.send(json.dumps({
                                     "type": "tts", "state": "sentence_start",
                                     "session_id": target.session_id,
@@ -385,6 +387,10 @@ class ConnectionHandler:
                                     "type": "tts", "state": "stop",
                                     "session_id": target.session_id
                                 }))
+                                target._bridge_playing = False  # 恢复 ASR 聆听
+                                # 注意：不在这里调 clear_queues()
+                                # play command 路径已经清过队列，再清会把当前会话的 LAST 也删掉，
+                                # 导致设备收到 sentence_start 后永远等不到 tts stop，卡在播放态
                 except Exception:
                     pass
                 return
@@ -397,6 +403,10 @@ class ConnectionHandler:
                 return
 
             if self.vad is None or self.asr is None:
+                return
+
+            # bridge 音乐播放中：丢弃设备上传的音频，防止音乐被 ASR 识别为语音
+            if self._bridge_playing:
                 return
 
             # 处理来自MQTT网关的音频包
@@ -1003,13 +1013,8 @@ class ConnectionHandler:
                                      timeout=2)
                     if _r.json().get("status") == "playing":
                         self.logger.bind(tag=TAG).info(f"缓存命中，跳过LLM直接播放: {query}")
-                        self.tts.tts_text_queue.put(
-                            TTSMessageDTO(
-                                sentence_id=current_sentence_id,
-                                sentence_type=SentenceType.LAST,
-                                content_type=ContentType.ACTION,
-                            )
-                        )
+                        # 不发 LAST：bridge 已同步发出 sentence_start（设备在播放态），
+                        # 由 bridge 的 tts stop 结束本轮，避免 LAST 把设备踢回聆听态
                         return
                 except Exception:
                     pass  # 查缓存失败则继续走 LLM
@@ -1088,7 +1093,12 @@ class ConnectionHandler:
                     if not tool_call_flag:
                         response_message.append(content)
                         # 如果累积内容以 { 开头，可能是播放指令JSON，暂缓发给TTS
-                        if not "".join(response_message).lstrip().startswith("{"):
+                        accumulated = "".join(response_message)
+                        # 两种情况暂缓发给 TTS：
+                        # 1. 整段以 { 开头（纯 JSON 输出）
+                        # 2. 文字后紧跟了播放指令 JSON，如 "嗯。{\"action\":\"play\"...}"
+                        has_play_json = '{"action"' in accumulated
+                        if not (accumulated.lstrip().startswith("{") or has_play_json):
                             self.tts.tts_text_queue.put(
                                 TTSMessageDTO(
                                     sentence_id=current_sentence_id,
@@ -1245,6 +1255,10 @@ class ConnectionHandler:
                     })),
                     self.loop
                 ).result(timeout=2)
+                # sentence_start 已发出，立即清队列：
+                # 必须在 httpx.post 之前清，否则 "嗯。" TTS 音频会在 bridge 连接期间
+                # 被 TTS 线程发出，导致 "嗯。" 和 bridge 音乐帧同时到达设备产生叠加
+                self.clear_queues()
                 bridge_url = os.environ.get("BRIDGE_URL", "http://localhost:8888")
                 httpx.post(f"{bridge_url}/play",
                             json={"lyric": play_cmd["lyric"], "device_id": self.device_id}, timeout=5)
