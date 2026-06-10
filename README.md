@@ -132,3 +132,29 @@ agent.py 部署在独立服务器（非 ECS 本机）时：
 ### 歌词搜索优化（music.py）
 - 新增 embedding 相似度搜索，用 `paraphrase-multilingual-MiniLM-L12-v2` 模型做语义匹配
 - 搜索顺序：精确匹配 → embedding 模糊匹配 → ncm-cli 在线搜索
+
+---
+
+## 工具：手动添加歌词别名（add_alias.py）
+
+当 ASR 把歌词识别成谐音或变体（如 "7687" 代替 "七溜八溜"），自动匹配失败时，可用此脚本将别名直接写入 `music_cache.json` 的 `lyric_index`，下次触发时精确命中。
+
+```bash
+python add_alias.py <别名> <已有歌词原文>
+```
+
+**示例：**
+```bash
+python add_alias.py "7687" "七溜八溜"
+# 已添加别名: '7687' → 七溜八溜 @ 12.5s
+```
+
+若 `<已有歌词原文>` 不存在，脚本会列出包含关键词的候选条目，方便确认正确写法：
+
+```bash
+python add_alias.py "别名" "七溜"
+# 未找到精确匹配 '七溜'，候选：
+#   '七溜八溜' → 七溜八溜
+```
+
+> **注意**：别名写入的是本地 `music_cache.json`，Docker 部署时需确保该文件通过 `-v` 挂载持久化，否则容器重建后别名会丢失。
