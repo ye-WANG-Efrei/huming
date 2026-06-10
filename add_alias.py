@@ -6,32 +6,48 @@
 """
 import sys
 import json
+import os
+from filelock import FileLock
 
 CACHE_FILE = "music_cache.json"
+_CACHE_LOCK = FileLock(CACHE_FILE + ".lock")
+
 
 def add_alias(alias: str, target_lyric: str):
-    with open(CACHE_FILE, encoding="utf-8") as f:
-        cache = json.load(f)
+    try:
+        with _CACHE_LOCK:
+            with open(CACHE_FILE, encoding="utf-8") as f:
+                cache = json.load(f)
 
-    index = cache.get("lyric_index", {})
+            index = cache.get("lyric_index", {})
 
-    if target_lyric not in index:
-        # 模糊查找：显示包含关键词的候选
-        candidates = [k for k in index if target_lyric in k or k in target_lyric]
-        if candidates:
-            print(f"未找到精确匹配 '{target_lyric}'，候选：")
-            for c in candidates[:10]:
-                print(f"  {c!r} → {index[c]['song_name']}")
-        else:
-            print(f"未找到 '{target_lyric}'，lyric_index 里没有这条歌词。")
-        return
+            if target_lyric not in index:
+                candidates = [k for k in index if target_lyric in k or k in target_lyric]
+                if candidates:
+                    print(f"未找到精确匹配 '{target_lyric}'，候选：")
+                    for c in candidates[:10]:
+                        print(f"  {c!r} → {index[c]['song_name']}")
+                else:
+                    print(f"未找到 '{target_lyric}'，lyric_index 里没有这条歌词。")
+                return
 
-    entry = index[target_lyric]
-    index[alias] = entry
-    cache["lyric_index"] = index
+            if alias in index and alias != target_lyric:
+                print(f"警告：'{alias}' 已存在（→ {index[alias]['song_name']}），将被覆盖。")
 
-    with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(cache, f, ensure_ascii=False)
+            entry = index[target_lyric]
+            index[alias] = entry
+
+            tmp = CACHE_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(cache, f, ensure_ascii=False)
+            os.replace(tmp, CACHE_FILE)
+
+    except FileNotFoundError:
+        print(f"错误：找不到 {CACHE_FILE}，请确认在正确目录下运行。")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"错误：{CACHE_FILE} 格式损坏（{e}），请检查文件内容。")
+        sys.exit(1)
 
     print(f"已添加别名: {alias!r} → {entry['song_name']} @ {entry['seconds']}s")
 

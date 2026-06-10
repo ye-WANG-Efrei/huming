@@ -4,9 +4,11 @@ import os
 import asyncio
 import pickle
 import numpy as np
+from filelock import FileLock
 from sentence_transformers import SentenceTransformer
 
 CACHE_FILE = "music_cache.json"
+_CACHE_LOCK = FileLock(CACHE_FILE + ".lock")
 EMBED_CACHE_FILE = "lyric_embeddings.pkl"
 EMBED_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 EMBED_THRESHOLD = 0.85
@@ -145,32 +147,35 @@ async def lookup(lyric_text: str, song_keyword: str = None) -> dict:
 
 
 async def _save_lyric_index(lines: list, song: dict):
-    cache = _load_cache()
-    for i, line in enumerate(lines):
-        if line["text"] in cache["lyric_index"]:  # 只保留第一次出现
-            continue
-        end_index = min(i + 6, len(lines) - 1)
-        cache["lyric_index"][line["text"]] = {
-            "song_name": song["name"],
-            "artist": song["artist"],
-            "original_id": song["original_id"],
-            "encrypted_id": song["encrypted_id"],
-            "seconds": line["time"],
-            "end_seconds": lines[end_index]["time"],
-        }
-    _save_cache(cache)
+    with _CACHE_LOCK:
+        cache = _load_cache()
+        for i, line in enumerate(lines):
+            if line["text"] in cache["lyric_index"]:  # 只保留第一次出现
+                continue
+            end_index = min(i + 6, len(lines) - 1)
+            cache["lyric_index"][line["text"]] = {
+                "song_name": song["name"],
+                "artist": song["artist"],
+                "original_id": song["original_id"],
+                "encrypted_id": song["encrypted_id"],
+                "seconds": line["time"],
+                "end_seconds": lines[end_index]["time"],
+            }
+        _save_cache(cache)
 
 
 def _load_cache() -> dict:
     if os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE) as f:
+        with open(CACHE_FILE, encoding="utf-8") as f:
             return json.load(f)
     return {"search": {}, "lyric": {}, "lyric_index": {}}
 
 
 def _save_cache(cache: dict):
-    with open(CACHE_FILE, "w") as f:
+    tmp = CACHE_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False)
+    os.replace(tmp, CACHE_FILE)
 
 
 def _ensure_ncm_login():
@@ -201,8 +206,10 @@ def search_song(keyword: str) -> dict:
         "encrypted_id": song["id"],
         "duration": song["duration"] // 1000,
     }
-    cache["search"][keyword] = song_data
-    _save_cache(cache)
+    with _CACHE_LOCK:
+        cache = _load_cache()
+        cache["search"][keyword] = song_data
+        _save_cache(cache)
     return song_data
 
 
@@ -236,8 +243,10 @@ def get_lyric(encrypted_id: str, song_name: str) -> list:
             except:
                 continue
 
-    cache["lyric"][encrypted_id] = lines
-    _save_cache(cache)
+    with _CACHE_LOCK:
+        cache = _load_cache()
+        cache["lyric"][encrypted_id] = lines
+        _save_cache(cache)
     return lines
 
 

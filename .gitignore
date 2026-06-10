@@ -22,3 +22,6 @@ music_cache.json
 .vscode/
 .idea/
 *.swp
+
+lyric_embeddings.pkl
+opus_cache/

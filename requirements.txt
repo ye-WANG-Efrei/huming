@@ -4,3 +4,4 @@ opuslib
 httpx
 sentence-transformers
 numpy
+filelock
