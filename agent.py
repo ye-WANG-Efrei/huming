@@ -111,8 +111,8 @@ async def stream_music(ws, song_keyword, start_seconds, end_seconds, artist=None
     probe_data = json.loads(probe.stdout)
     file_duration = float(probe_data["format"]["duration"])
     print(f"文件时长: {file_duration:.1f}s，请求起点: {start_seconds:.1f}s")
-    if start_seconds >= file_duration:
-        print(f"起点超出文件时长，从头播放")
+    if start_seconds >= file_duration or (file_duration - start_seconds) < 10:
+        print(f"可用时长不足({file_duration - start_seconds:.1f}s)，从头播放")
         start_seconds = 0
 
     ffmpeg = subprocess.Popen(
